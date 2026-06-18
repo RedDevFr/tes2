@@ -852,7 +852,7 @@
                     formData.append('ip', JSON.stringify(userIP));
                     console.log('✅ IP ajoutée au formulaire');
                 } else {
-                    console.warn('⚠️ IP non disponible ou en erreur, envoi d'un fallback');
+                    console.warn("⚠️ IP non disponible ou en erreur, envoi d'un fallback");
                     formData.append('ip', JSON.stringify({ error: 'Non disponible' }));
                 }
                 
